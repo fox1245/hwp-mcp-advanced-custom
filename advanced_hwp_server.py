@@ -1119,16 +1119,19 @@ def export_to_pdf(output_path: str) -> str:
     """현재 문서를 PDF로 내보냅니다."""
     try:
         hwp_controller.check_initialization()
-        
-        act = hwp_controller.hwp.CreateAction("FileSaveAsPdf")
-        pset = act.CreateSet()
-        pset.SetItem("filename", output_path)
-        pset.SetItem("Format", "PDF")
-        act.Execute(pset)
-        
-        logger.info(f"PDF 내보내기 완료: {output_path}")
-        return f"PDF로 내보냈습니다: {output_path}"
-        
+
+        # SaveAs에 "PDF" 포맷 지정
+        hwp_controller.hwp.SaveAs(output_path, "PDF")
+
+        # 파일 생성 확인
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            logger.info(f"PDF 내보내기 완료: {output_path} ({size} bytes)")
+            return f"PDF로 내보냈습니다: {output_path}"
+        else:
+            logger.warning(f"PDF 내보내기: 파일 미생성 ({output_path})")
+            return f"PDF 내보내기 실패: 파일이 생성되지 않았습니다 ({output_path})"
+
     except Exception as e:
         logger.error(f"PDF 내보내기 실패: {e}")
         return f"PDF 내보내기 실패: {e}"
