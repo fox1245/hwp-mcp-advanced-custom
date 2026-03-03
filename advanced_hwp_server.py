@@ -539,8 +539,13 @@ def save_document(file_path: Optional[str] = None) -> str:
         hwp_controller.check_initialization()
         
         if file_path:
-            hwp_controller.hwp.SaveAs(file_path, "HWP")
-            
+            # 기존 파일 덮어쓰기 시 확인 다이얼로그 억제
+            hwp_controller.hwp.SetMessageBoxMode(0x10000)  # auto YES
+            try:
+                hwp_controller.hwp.SaveAs(file_path, "HWP")
+            finally:
+                hwp_controller.hwp.SetMessageBoxMode(0)  # 원래대로 복원
+
             hwp_controller.current_document = file_path
             logger.info(f"문서 저장 완료: {file_path}")
             return f"문서를 저장했습니다: {file_path}"
@@ -737,27 +742,50 @@ def find_and_replace(find_text: str, replace_text: str, replace_all: bool = Fals
         hwp_controller.check_initialization()
         hwp = hwp_controller.hwp
 
-        # 문서 시작으로 이동
-        hwp.HAction.Run("MoveDocBegin")
+        # ── 다이얼로그-프리 바꾸기 (Python 문자열 치환 방식) ──
+        # HWP의 AllReplace는 "계속 찾을까요?" 모달 다이얼로그를 띄워서
+        # 자동화가 블록됩니다. 대신 전체 텍스트를 추출 → Python에서 치환 →
+        # 전체 선택 후 붙여넣기로 교체합니다. 서식은 유지되지 않지만
+        # 자동화 안정성을 우선합니다.
 
-        # HParameterSet 방식 사용
-        if replace_all:
-            hwp.HAction.GetDefault("AllReplace", hwp.HParameterSet.HFindReplace.HSet)
-            hwp.HParameterSet.HFindReplace.FindString = find_text
-            hwp.HParameterSet.HFindReplace.ReplaceString = replace_text
-            hwp.HParameterSet.HFindReplace.ReplaceMode = 1  # 모두 바꾸기
-            result = hwp.HAction.Execute("AllReplace", hwp.HParameterSet.HFindReplace.HSet)
-        else:
-            hwp.HAction.GetDefault("Replace", hwp.HParameterSet.HFindReplace.HSet)
-            hwp.HParameterSet.HFindReplace.FindString = find_text
-            hwp.HParameterSet.HFindReplace.ReplaceString = replace_text
-            result = hwp.HAction.Execute("Replace", hwp.HParameterSet.HFindReplace.HSet)
+        # 1) 전체 텍스트 추출
+        hwp.InitScan()
+        texts = []
+        while True:
+            state, text = hwp.GetText()
+            texts.append(text)
+            if state <= 0:  # 0=끝, 음수=에러
+                break
+        hwp.ReleaseScan()
+        full_text = "\r\n".join(texts)
 
-        if result:
-            logger.info(f"찾기/바꾸기 완료: '{find_text}' -> '{replace_text}'")
-            return f"'{find_text}'를 '{replace_text}'로 {'모두 ' if replace_all else ''}바꾸었습니다."
-        else:
+        # 2) 치환
+        if find_text not in full_text:
             return f"'{find_text}'를 찾을 수 없습니다."
+
+        if replace_all:
+            count = full_text.count(find_text)
+            new_text = full_text.replace(find_text, replace_text)
+        else:
+            count = 1
+            new_text = full_text.replace(find_text, replace_text, 1)
+
+        # 3) 문서 전체 선택 → 삭제 → 새 텍스트 삽입
+        hwp.HAction.Run("SelectAll")
+        hwp.HAction.Run("Delete")
+
+        # 문단별로 삽입 (BreakPara로 문단 구분)
+        paragraphs = new_text.split("\r\n")
+        for i, para in enumerate(paragraphs):
+            if para:
+                hwp.HAction.GetDefault("InsertText", hwp.HParameterSet.HInsertText.HSet)
+                hwp.HParameterSet.HInsertText.Text = para
+                hwp.HAction.Execute("InsertText", hwp.HParameterSet.HInsertText.HSet)
+            if i < len(paragraphs) - 1:
+                hwp.HAction.Run("BreakPara")
+
+        logger.info(f"찾기/바꾸기 완료: '{find_text}' -> '{replace_text}' ({count}건)")
+        return f"'{find_text}'를 '{replace_text}'로 {'모두 ' if replace_all else ''}{count}건 바꾸었습니다."
 
     except Exception as e:
         logger.error(f"찾기/바꾸기 실패: {e}")
