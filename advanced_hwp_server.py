@@ -101,18 +101,10 @@ class AdvancedHwpController:
             except:
                 pass
 
-            # 한글 창을 보이게 설정
+            # 한글 창을 숨김 모드로 설정 (COM 자동화는 비가시 상태에서도 정상 동작)
+            # HWP는 항상 최소 1개 문서를 유지하므로, 빈 문서를 닫지 않고 창 자체를 숨긴다
             if self.hwp.XHwpWindows.Count > 0:
-                self.hwp.XHwpWindows.Item(0).Visible = True
-
-            # HWP COM 생성 시 자동으로 열리는 빈 문서 닫기
-            # (create_document나 open_document가 별도로 문서를 생성/열기 함)
-            try:
-                if self.hwp.XHwpDocuments.Count > 0:
-                    self.hwp.HAction.Run("FileClose")
-                    logger.info("초기 빈 문서 닫기 완료")
-            except Exception:
-                pass
+                self.hwp.XHwpWindows.Item(0).Visible = False
 
             self.is_initialized = True
             logger.info("한글 COM 객체 초기화 완료 (자동화 모드 활성화)")
@@ -136,6 +128,22 @@ class AdvancedHwpController:
             if not self.initialize():
                 raise Exception("한글 프로그램이 설치되지 않았거나 초기화할 수 없습니다.")
         return True
+
+    def set_visible(self, visible: bool):
+        """HWP 창 가시성 설정"""
+        try:
+            if self.hwp and self.hwp.XHwpWindows.Count > 0:
+                self.hwp.XHwpWindows.Item(0).Visible = visible
+        except Exception:
+            pass
+
+    def hide_if_only_blank(self):
+        """작업 문서가 없고 빈 문서만 남았으면 HWP 창 숨김"""
+        try:
+            if self.hwp and self.hwp.XHwpDocuments.Count <= 1:
+                self.set_visible(False)
+        except Exception:
+            pass
 
 # 전역 컨트롤러 인스턴스
 hwp_controller = AdvancedHwpController()
@@ -483,14 +491,15 @@ def create_document() -> str:
     """새 한글 문서를 생성합니다."""
     try:
         hwp_controller.check_initialization()
-        
+        hwp_controller.set_visible(True)
+
         hwp = hwp_controller.hwp
         act = hwp.CreateAction("FileNew")
         pset = act.CreateSet()
         act.GetDefault(pset)
         act.Execute(pset)
         hwp_controller.current_document = "new_document"
-        
+
         logger.info("새 문서 생성 완료")
         return "새 문서가 생성되었습니다."
         
@@ -503,7 +512,8 @@ def open_document(file_path: str) -> str:
     """지정된 경로의 한글 문서를 엽니다."""
     try:
         hwp_controller.check_initialization()
-        
+        hwp_controller.set_visible(True)
+
         if not os.path.exists(file_path):
             return f"파일을 찾을 수 없습니다: {file_path}"
         
@@ -576,10 +586,11 @@ def close_document(save_changes: bool = False) -> str:
         
         hwp_controller.hwp.HAction.Run("FileClose")
         hwp_controller.current_document = None
-        
+        hwp_controller.hide_if_only_blank()
+
         logger.info("문서 닫기 완료")
         return "문서를 닫았습니다."
-        
+
     except Exception as e:
         logger.error(f"문서 닫기 실패: {e}")
         return f"문서 닫기 실패: {e}"
@@ -609,10 +620,11 @@ def close_all_documents(save_changes: bool = False) -> str:
                 break
         
         hwp_controller.current_document = None
-        
+        hwp_controller.hide_if_only_blank()
+
         logger.info(f"모든 문서 닫기 완료: {closed_count}개")
         return f"모든 문서를 닫았습니다. ({closed_count}개)"
-        
+
     except Exception as e:
         logger.error(f"모든 문서 닫기 실패: {e}")
         return f"모든 문서 닫기 실패: {e}"
