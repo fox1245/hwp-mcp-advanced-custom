@@ -625,19 +625,25 @@ def quit_hwp() -> str:
 
 @mcp.tool()
 def insert_text(text: str, position: str = "current") -> str:
-    """텍스트를 삽입합니다."""
+    """텍스트를 삽입합니다. 줄바꿈(\\n)은 문단 구분(Enter)으로 처리됩니다."""
     try:
         hwp_controller.check_initialization()
-        
+        hwp = hwp_controller.hwp
+
         if position == "current":
-            act = hwp_controller.hwp.CreateAction("InsertText")
-            pset = act.CreateSet()
-            pset.SetItem("Text", text)
-            act.Execute(pset)
-        
+            lines = text.split('\n')
+            for i, line in enumerate(lines):
+                if line:
+                    act = hwp.CreateAction("InsertText")
+                    pset = act.CreateSet()
+                    pset.SetItem("Text", line)
+                    act.Execute(pset)
+                if i < len(lines) - 1:
+                    hwp.HAction.Run("BreakPara")
+
         logger.info(f"텍스트 삽입 완료: {text[:50]}...")
         return f"텍스트를 삽입했습니다: {text[:50]}..."
-        
+
     except Exception as e:
         logger.error(f"텍스트 삽입 실패: {e}")
         return f"텍스트 삽입 실패: {e}"
