@@ -834,12 +834,21 @@ def find_and_replace(find_text: str, replace_text: str, replace_all: bool = Fals
         return f"찾기/바꾸기 실패: {e}"
 
 @mcp.tool()
-def create_table(rows: int, cols: int, border: bool = True) -> str:
-    """표를 생성합니다."""
+def create_table(rows: int, cols: int, data: Optional[str] = None, border: bool = True) -> str:
+    """표를 생성하고, data가 지정되면 셀에 데이터를 채웁니다.
+
+    Args:
+        rows: 행 수
+        cols: 열 수
+        data: (선택) CSV 형식 데이터. 쉼표로 열 구분, 줄바꿈으로 행 구분.
+              예: "항목,값\\n삼성전자,193900\\nSK하이닉스,949000"
+        border: 테두리 표시 여부
+    """
     try:
         hwp_controller.check_initialization()
-        
-        act = hwp_controller.hwp.CreateAction("TableCreate")
+        hwp = hwp_controller.hwp
+
+        act = hwp.CreateAction("TableCreate")
         pset = act.CreateSet()
         pset.SetItem("Rows", rows)
         pset.SetItem("Cols", cols)
@@ -847,10 +856,35 @@ def create_table(rows: int, cols: int, border: bool = True) -> str:
         pset.SetItem("HeightType", 0)
         pset.SetItem("CreateItemArray", [0, 1, 0])
         act.Execute(pset)
-        
-        logger.info(f"표 생성 완료: {rows}행 {cols}열")
-        return f"{rows}행 {cols}열 표를 생성했습니다."
-        
+
+        filled_cells = 0
+        if data:
+            # TableCreate 후 커서가 테이블 밖에 있을 수 있음 → 강제로 첫 셀 진입
+            # MoveLeft로 테이블 안으로 이동 후, 첫 셀(좌상단)까지 이동
+            hwp.HAction.Run("MoveLeft")
+            # 충분히 왼쪽으로 이동하여 첫 셀 도달 보장
+            for _ in range(rows * cols):
+                hwp.HAction.Run("TableLeftCell")
+
+            data = data.replace('\\n', '\n')
+            csv_rows = [row.split(',') for row in data.strip().split('\n') if row.strip()]
+
+            for r_idx in range(rows):
+                for c_idx in range(cols):
+                    if r_idx < len(csv_rows) and c_idx < len(csv_rows[r_idx]):
+                        cell_text = csv_rows[r_idx][c_idx].strip()
+                        if cell_text:
+                            hwp.HAction.GetDefault("InsertText", hwp.HParameterSet.HInsertText.HSet)
+                            hwp.HParameterSet.HInsertText.Text = cell_text
+                            hwp.HAction.Execute("InsertText", hwp.HParameterSet.HInsertText.HSet)
+                            filled_cells += 1
+
+                    if not (r_idx == rows - 1 and c_idx == cols - 1):
+                        hwp.HAction.Run("TableRightCell")
+
+        logger.info(f"표 생성 완료: {rows}행 {cols}열, {filled_cells}개 셀 채움")
+        return f"{rows}행 {cols}열 표를 생성했습니다." + (f" ({filled_cells}개 셀에 데이터 입력)" if filled_cells > 0 else "")
+
     except Exception as e:
         logger.error(f"표 생성 실패: {e}")
         return f"표 생성 실패: {e}"
