@@ -123,10 +123,15 @@ class AdvancedHwpController:
             pass
     
     def check_initialization(self):
-        """초기화 상태 확인"""
+        """초기화 상태 확인 + 매 호출마다 메시지 박스 자동 응답 재설정"""
         if not self.is_initialized:
             if not self.initialize():
                 raise Exception("한글 프로그램이 설치되지 않았거나 초기화할 수 없습니다.")
+        # HWP가 내부적으로 리셋할 수 있으므로, 매 도구 호출마다 재설정
+        try:
+            self.hwp.SetMessageBoxMode(0x10000)
+        except Exception:
+            pass
         return True
 
     def set_visible(self, visible: bool):
@@ -494,6 +499,22 @@ def create_document() -> str:
         hwp_controller.set_visible(True)
 
         hwp = hwp_controller.hwp
+        hwp.SetMessageBoxMode(0x10000)  # 대화상자 자동 승인
+
+        # 초기화 직후 빈 문서가 이미 1개 존재하고, 내용이 비어있으면 그걸 재사용
+        doc_count = hwp.XHwpDocuments.Count
+        if doc_count == 1:
+            # 현재 문서의 텍스트가 비어있는지 확인
+            hwp.InitScan()
+            state, text = hwp.GetText()
+            hwp.ReleaseScan()
+            if not text or text.strip() == "":
+                # 빈 문서를 그대로 재사용 — FileNew 불필요
+                hwp_controller.current_document = "new_document"
+                logger.info("기존 빈 문서 재사용")
+                return "새 문서가 생성되었습니다."
+
+        # 빈 문서가 아니거나 여러 문서가 열려있으면 새로 생성
         act = hwp.CreateAction("FileNew")
         pset = act.CreateSet()
         act.GetDefault(pset)
@@ -502,7 +523,7 @@ def create_document() -> str:
 
         logger.info("새 문서 생성 완료")
         return "새 문서가 생성되었습니다."
-        
+
     except Exception as e:
         logger.error(f"문서 생성 실패: {e}")
         return f"문서 생성 실패: {e}"
@@ -655,6 +676,8 @@ def insert_text(text: str, position: str = "current") -> str:
         hwp = hwp_controller.hwp
 
         if position == "current":
+            # MCP JSON 전송 시 \n이 리터럴 문자열로 전달될 수 있으므로 실제 개행으로 변환
+            text = text.replace('\\n', '\n')
             lines = text.split('\n')
             for i, line in enumerate(lines):
                 if line:
@@ -953,54 +976,67 @@ def set_page_size(width: int = 210, height: int = 297, orientation: str = "portr
 
 @mcp.tool()
 def insert_image(image_path: str, x: int = 0, y: int = 0, width: int = 100, height: int = 100) -> str:
-    """이미지를 삽입합니다."""
+    """이미지를 삽입합니다. width/height 단위는 mm입니다."""
     try:
         hwp_controller.check_initialization()
-        
+
         if not os.path.exists(image_path):
             return f"이미지 파일을 찾을 수 없습니다: {image_path}"
-        
-        act = hwp_controller.hwp.CreateAction("InsertPicture")
-        pset = act.CreateSet()
-        pset.SetItem("Path", image_path)
-        pset.SetItem("Embedded", True)
-        pset.SetItem("sizeoption", 3)
-        pset.SetItem("Width", width * 100)
-        pset.SetItem("Height", height * 100)
-        act.Execute(pset)
-        
-        logger.info(f"이미지 삽입 완료: {image_path}")
-        return f"이미지를 삽입했습니다: {image_path}"
-        
+
+        hwp = hwp_controller.hwp
+
+        # InsertPicture 직접 메서드 사용 (HParameterSet 방식은 속성명 불일치 이슈)
+        ctrl = hwp.InsertPicture(
+            image_path,
+            Embedded=True,
+            sizeoption=1,  # 1=지정크기
+            Width=hwp.MiliToHwpUnit(width),
+            Height=hwp.MiliToHwpUnit(height),
+        )
+
+        if ctrl:
+            logger.info(f"이미지 삽입 완료: {image_path} ({width}x{height}mm)")
+            return f"이미지를 삽입했습니다: {image_path} ({width}x{height}mm)"
+        else:
+            return f"이미지 삽입 실패: InsertPicture가 None을 반환했습니다 ({image_path})"
+
     except Exception as e:
         logger.error(f"이미지 삽입 실패: {e}")
         return f"이미지 삽입 실패: {e}"
 
 @mcp.tool()
 def insert_shape(shape_type: str, x: int = 0, y: int = 0, width: int = 50, height: int = 50) -> str:
-    """도형을 삽입합니다."""
+    """도형(사각 영역)을 삽입합니다. width/height 단위는 mm입니다.
+    HWP COM 제한으로 1x1 표를 이용한 사각 영역만 지원됩니다.
+    지원: rectangle, textbox, square, ellipse (모두 동일한 사각 영역으로 생성)
+    원, 선, 자유도형 등은 HWP COM 자동화 미지원."""
     try:
         hwp_controller.check_initialization()
-        
-        shape_map = {
-            "rectangle": 1,
-            "ellipse": 2,
-            "line": 3,
-            "arrow": 4,
-            "textbox": 5
-        }
-        
-        shape_value = shape_map.get(shape_type.lower(), 1)
-        
-        act = hwp_controller.hwp.CreateAction("DrawObjDialog")
-        pset = act.CreateSet()
-        pset.SetItem("ShapeType", shape_value)
-        pset.SetItem("TreatAsChar", False)
-        act.Execute(pset)
-        
-        logger.info(f"도형 삽입 완료: {shape_type}")
-        return f"도형을 삽입했습니다: {shape_type}"
-        
+        hwp = hwp_controller.hwp
+
+        shape_lower = shape_type.lower()
+
+        # HWP COM에서 도형은 InsertCtrl("gso")로 생성 가능하나 시각 속성이 없어 보이지 않음
+        # 실용적 대안: 1x1 표로 사각형/텍스트박스 대체
+        if shape_lower in ("rectangle", "textbox", "ellipse", "square"):
+            hwp.HAction.GetDefault("TableCreate", hwp.HParameterSet.HTableCreation.HSet)
+            pset = hwp.HParameterSet.HTableCreation
+            pset.Rows = 1
+            pset.Cols = 1
+            pset.WidthType = 2  # 절대값
+            pset.HeightType = 1  # 고정
+            pset.CreateItemArray("ColWidth", 1)
+            pset.ColWidth.SetItem(0, hwp.MiliToHwpUnit(width))
+            pset.CreateItemArray("RowHeight", 1)
+            pset.RowHeight.SetItem(0, hwp.MiliToHwpUnit(height))
+            result = hwp.HAction.Execute("TableCreate", pset.HSet)
+            if result:
+                logger.info(f"1x1 표로 도형 삽입: {shape_type} ({width}x{height}mm)")
+                return f"도형을 삽입했습니다(1x1 표): {shape_type} ({width}x{height}mm)"
+            return f"도형 삽입 실패: TableCreate 실행 실패 ({shape_type})"
+
+        return f"도형 삽입 실패: HWP COM에서 '{shape_type}' 도형은 미지원. rectangle, textbox, ellipse를 사용하세요."
+
     except Exception as e:
         logger.error(f"도형 삽입 실패: {e}")
         return f"도형 삽입 실패: {e}"
@@ -1292,8 +1328,8 @@ def get_table_as_csv(table_index: int = 1, output_path: Optional[str] = None) ->
         cols = 0
         try:
             tbl_set = target_ctrl.Properties
-            rows = tbl_set.Item("RowCount")
-            cols = tbl_set.Item("ColCount")
+            rows = tbl_set.Item("RowCount") or 0
+            cols = tbl_set.Item("ColCount") or 0
         except:
             pass
         
