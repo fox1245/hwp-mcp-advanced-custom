@@ -50,7 +50,11 @@ class AdvancedHwpController:
         self.current_document = None
         
     def initialize(self):
-        """한글 COM 객체 초기화"""
+        """한글 COM 객체 초기화 (이미 초기화되었으면 스킵)"""
+        if self.is_initialized and self.hwp:
+            logger.info("한글 COM 객체 이미 초기화됨 — 스킵")
+            return True
+
         try:
             pythoncom.CoInitialize()
 
@@ -82,9 +86,12 @@ class AdvancedHwpController:
                 pass
 
             # 4. 메시지 박스 자동 응답 설정 (모든 확인창 자동 Yes)
+            # SetMessageBoxMode 값:
+            #   0x00000 = 기본값 (다이얼로그 표시)
+            #   0x10000 = 자동 YES/확인
+            #   0x20000 = 자동 NO/취소
             try:
-                # MessageBoxMode: 0=자동응답, 1=대화상자표시
-                self.hwp.MessageBoxMode = 0
+                self.hwp.SetMessageBoxMode(0x10000)
             except:
                 pass
 
@@ -94,15 +101,18 @@ class AdvancedHwpController:
             except:
                 pass
 
-            # 6. 화면 업데이트 일시 중지 (성능 향상)
-            try:
-                self.hwp.SetMessageBoxMode(0)  # 0=자동, 1=표시
-            except:
-                pass
-
             # 한글 창을 보이게 설정
             if self.hwp.XHwpWindows.Count > 0:
                 self.hwp.XHwpWindows.Item(0).Visible = True
+
+            # HWP COM 생성 시 자동으로 열리는 빈 문서 닫기
+            # (create_document나 open_document가 별도로 문서를 생성/열기 함)
+            try:
+                if self.hwp.XHwpDocuments.Count > 0:
+                    self.hwp.HAction.Run("FileClose")
+                    logger.info("초기 빈 문서 닫기 완료")
+            except Exception:
+                pass
 
             self.is_initialized = True
             logger.info("한글 COM 객체 초기화 완료 (자동화 모드 활성화)")
@@ -539,12 +549,9 @@ def save_document(file_path: Optional[str] = None) -> str:
         hwp_controller.check_initialization()
         
         if file_path:
-            # 기존 파일 덮어쓰기 시 확인 다이얼로그 억제
-            hwp_controller.hwp.SetMessageBoxMode(0x10000)  # auto YES
-            try:
-                hwp_controller.hwp.SaveAs(file_path, "HWP")
-            finally:
-                hwp_controller.hwp.SetMessageBoxMode(0)  # 원래대로 복원
+            # SaveAs 실행 (initialize에서 SetMessageBoxMode(0x10000)
+            # 이미 설정되어 있으므로 덮어쓰기 확인 다이얼로그 자동 승인)
+            hwp_controller.hwp.SaveAs(file_path, "HWP")
 
             hwp_controller.current_document = file_path
             logger.info(f"문서 저장 완료: {file_path}")
