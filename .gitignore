@@ -55,3 +55,4 @@ test_document.hwp
 *.md
 !README.md
 !INSTALLATION_GUIDE.md
+!SSE_SETUP.md

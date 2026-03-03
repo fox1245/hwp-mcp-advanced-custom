@@ -38,7 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # MCP 서버 초기화
-mcp = FastMCP("Advanced HWP Server")
+mcp = FastMCP("Advanced HWP Server", host="0.0.0.0", port=8765)
 
 class AdvancedHwpController:
     """고급 한글 컨트롤러 클래스"""
@@ -2467,7 +2467,7 @@ def main():
     try:
         logger.info("Advanced HWP MCP Server 시작")
         
-        mcp.run()
+        mcp.run(transport="sse")
         
     except Exception as e:
         logger.error(f"서버 실행 중 오류: {e}")
