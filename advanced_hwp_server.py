@@ -539,11 +539,7 @@ def save_document(file_path: Optional[str] = None) -> str:
         hwp_controller.check_initialization()
         
         if file_path:
-            act = hwp_controller.hwp.CreateAction("FileSaveAs")
-            pset = act.CreateSet()
-            pset.SetItem("filename", file_path)
-            pset.SetItem("format", "HWP")
-            act.Execute(pset)
+            hwp_controller.hwp.SaveAs(file_path, "HWP")
             
             hwp_controller.current_document = file_path
             logger.info(f"문서 저장 완료: {file_path}")
