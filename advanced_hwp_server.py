@@ -474,7 +474,11 @@ def create_document() -> str:
     try:
         hwp_controller.check_initialization()
         
-        hwp_controller.hwp.HAction.Run("FileNew")
+        hwp = hwp_controller.hwp
+        act = hwp.CreateAction("FileNew")
+        pset = act.CreateSet()
+        act.GetDefault(pset)
+        act.Execute(pset)
         hwp_controller.current_document = "new_document"
         
         logger.info("새 문서 생성 완료")
